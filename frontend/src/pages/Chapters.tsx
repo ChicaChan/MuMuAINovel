@@ -262,7 +262,7 @@ export default function Chapters() {
   };
 
   // 🔔 显示浏览器通知
-  const showBrowserNotification = (title: string, body: string, type: 'success' | 'error' | 'info' = 'info') => {
+  const showBrowserNotification = async (title: string, body: string, type: 'success' | 'error' | 'info' = 'info') => {
     // 检查浏览器是否支持通知
     if (!('Notification' in window)) {
       console.log('浏览器不支持通知功能');
@@ -273,26 +273,40 @@ export default function Chapters() {
     if (Notification.permission === 'granted') {
       // 选择图标
       const icon = type === 'success' ? '/logo.svg' : type === 'error' ? '/favicon.ico' : '/logo.svg';
-      
-      const notification = new Notification(title, {
+
+      const notificationOptions = {
         body,
         icon,
         badge: '/favicon.ico',
         tag: 'batch-generation', // 相同tag会替换旧通知
         requireInteraction: false, // 自动关闭
         silent: false, // 播放提示音
-      });
-
-      // 点击通知时聚焦到窗口
-      notification.onclick = () => {
-        window.focus();
-        notification.close();
       };
 
-      // 5秒后自动关闭
-      setTimeout(() => {
-        notification.close();
-      }, 5000);
+      try {
+        // 优先尝试使用 Service Worker 显示通知（兼容性更好）
+        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+          const registration = await navigator.serviceWorker.ready;
+          await registration.showNotification(title, notificationOptions);
+        } else {
+          // 回退到直接使用 Notification 构造函数
+          const notification = new Notification(title, notificationOptions);
+
+          // 点击通知时聚焦到窗口
+          notification.onclick = () => {
+            window.focus();
+            notification.close();
+          };
+
+          // 5秒后自动关闭
+          setTimeout(() => {
+            notification.close();
+          }, 5000);
+        }
+      } catch (error) {
+        // 如果通知失败，静默降级（不影响主功能）
+        console.warn('浏览器通知显示失败，已静默降级:', error);
+      }
     } else if (Notification.permission !== 'denied') {
       // 如果权限未被明确拒绝，尝试请求权限
       Notification.requestPermission().then(permission => {
