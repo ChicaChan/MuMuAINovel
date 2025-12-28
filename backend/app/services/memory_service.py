@@ -136,16 +136,30 @@ class MemoryService:
                 
                 # 优先尝试从本地路径加载
                 if has_valid_model:
-                    logger.info(f"✅ 检测到完整本地模型，使用离线模式加载")
+                    # 直接使用快照目录路径加载，绕过 HuggingFace 缓存解析机制
+                    snapshot_path = os.path.join(snapshots_dir, snapshots[0])
+                    logger.info(f"✅ 检测到完整本地模型，直接使用快照路径加载")
+                    logger.info(f"   快照路径: {snapshot_path}")
+
+                    # 验证快照目录中是否包含必要的模型文件
+                    required_files = ['config.json', 'model.safetensors']
+                    missing_files = [f for f in required_files if not os.path.exists(os.path.join(snapshot_path, f))]
+                    if missing_files:
+                        # 尝试检查是否有 pytorch_model.bin
+                        if 'model.safetensors' in missing_files and os.path.exists(os.path.join(snapshot_path, 'pytorch_model.bin')):
+                            missing_files.remove('model.safetensors')
+
+                    if missing_files:
+                        logger.warning(f"⚠️ 快照目录缺少必要文件: {missing_files}")
+                        raise FileNotFoundError(f"模型文件不完整: {missing_files}")
+
                     try:
                         self.embedding_model = SentenceTransformer(
-                            'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
-                            cache_folder=abs_cache_dir,
+                            snapshot_path,  # 直接使用快照目录路径
                             device='cpu',
-                            trust_remote_code=True,
-                            local_files_only=True  # 强制使用本地文件
+                            trust_remote_code=True
                         )
-                        logger.info("✅ Embedding模型加载成功 (离线模式)")
+                        logger.info("✅ Embedding模型加载成功 (离线模式，直接路径)")
                     except Exception as local_err:
                         logger.warning(f"⚠️ 离线模式加载失败: {str(local_err)}")
                         logger.info("🔄 尝试在线模式...")

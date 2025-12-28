@@ -784,8 +784,13 @@ class AIService:
             raise TimeoutError(f"AI服务超时（180秒），请稍后重试或减少上下文长度") from e
         except httpx.HTTPStatusError as e:
             logger.error(f"❌ OpenAI流式API调用失败 (HTTP {e.response.status_code})")
-            logger.error(f"  - 错误信息: {await e.response.aread()}")
-            raise
+            # 安全读取错误信息，流可能已经关闭
+            try:
+                error_content = await e.response.aread()
+                logger.error(f"  - 错误信息: {error_content}")
+            except Exception as read_error:
+                logger.error(f"  - 无法读取错误详情（流已关闭）: {type(read_error).__name__}")
+            raise Exception(f"AI服务返回错误 (HTTP {e.response.status_code})，请稍后重试") from e
         except Exception as e:
             logger.error(f"❌ OpenAI流式API调用失败: {str(e)}")
             logger.error(f"  - 错误类型: {type(e).__name__}")

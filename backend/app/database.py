@@ -144,69 +144,85 @@ async def get_engine(user_id: str):
 
 async def get_db(request: Request):
     """获取数据库会话的依赖函数
-    
+
     从 request.state.user_id 获取用户ID，然后返回该用户的数据库会话
+
+    注意：使用标志位防止重复回滚导致的竞态条件错误
     """
     user_id = getattr(request.state, "user_id", None)
-    
+
     if not user_id:
         raise HTTPException(status_code=401, detail="未登录或用户ID缺失")
-    
+
     engine = await get_engine(user_id)
-    
+
     AsyncSessionLocal = async_sessionmaker(
         engine,
         class_=AsyncSession,
         expire_on_commit=False
     )
-    
+
     session = AsyncSessionLocal()
     session_id = id(session)
-    
+
     global _session_stats
     _session_stats["created"] += 1
     _session_stats["active"] += 1
-    
+
     logger.debug(f"📊 会话创建 [User:{user_id}][ID:{session_id}] - 活跃:{_session_stats['active']}, 总创建:{_session_stats['created']}, 总关闭:{_session_stats['closed']}")
-    
+
+    # 事务处理标志位，防止重复回滚
+    transaction_handled = False
+
+    async def safe_rollback(context: str) -> bool:
+        """安全回滚事务，返回是否成功执行了回滚"""
+        nonlocal transaction_handled
+        if transaction_handled:
+            return False
+        try:
+            if session.in_transaction():
+                await session.rollback()
+                transaction_handled = True
+                logger.info(f"✅ 事务已回滚 [User:{user_id}][ID:{session_id}]（{context}）")
+                return True
+        except Exception as e:
+            # 检查是否是"回滚已在进行中"的错误
+            error_msg = str(e)
+            if "already in progress" in error_msg or "CLOSED" in error_msg:
+                transaction_handled = True
+                logger.debug(f"⏭️ 事务已被其他地方处理 [User:{user_id}][ID:{session_id}]: {error_msg[:100]}")
+            else:
+                _session_stats["errors"] += 1
+                logger.error(f"❌ 回滚失败 [User:{user_id}][ID:{session_id}]（{context}）: {error_msg}")
+        return False
+
     try:
         yield session
-        if session.in_transaction():
-            await session.rollback()
+        # 正常退出时，如果有未提交的事务，回滚它
+        await safe_rollback("正常退出")
     except GeneratorExit:
         _session_stats["generator_exits"] += 1
         logger.warning(f"⚠️ GeneratorExit [User:{user_id}][ID:{session_id}] - SSE连接断开（总计:{_session_stats['generator_exits']}次）")
-        try:
-            if session.in_transaction():
-                await session.rollback()
-                logger.info(f"✅ 事务已回滚 [User:{user_id}][ID:{session_id}]（GeneratorExit）")
-        except Exception as rollback_error:
-            _session_stats["errors"] += 1
-            logger.error(f"❌ GeneratorExit回滚失败 [User:{user_id}][ID:{session_id}]: {str(rollback_error)}")
+        await safe_rollback("GeneratorExit")
     except Exception as e:
         _session_stats["errors"] += 1
         logger.error(f"❌ 会话异常 [User:{user_id}][ID:{session_id}]: {str(e)}")
-        try:
-            if session.in_transaction():
-                await session.rollback()
-                logger.info(f"✅ 事务已回滚 [User:{user_id}][ID:{session_id}]（异常）")
-        except Exception as rollback_error:
-            logger.error(f"❌ 异常回滚失败 [User:{user_id}][ID:{session_id}]: {str(rollback_error)}")
+        await safe_rollback("异常")
         raise
     finally:
         try:
-            if session.in_transaction():
-                await session.rollback()
-                logger.warning(f"⚠️ finally中发现未提交事务 [User:{user_id}][ID:{session_id}]，已回滚")
-            
+            # 最后的安全网：如果事务仍未处理，尝试回滚
+            if not transaction_handled:
+                await safe_rollback("finally安全网")
+
             await session.close()
-            
+
             _session_stats["closed"] += 1
             _session_stats["active"] -= 1
             _session_stats["last_check"] = datetime.now().isoformat()
-            
+
             logger.debug(f"📊 会话关闭 [User:{user_id}][ID:{session_id}] - 活跃:{_session_stats['active']}, 总创建:{_session_stats['created']}, 总关闭:{_session_stats['closed']}, 错误:{_session_stats['errors']}")
-            
+
             # 使用优化后的会话监控阈值
             if _session_stats["active"] > settings.database_session_leak_threshold:
                 logger.error(f"🚨 严重告警：活跃会话数 {_session_stats['active']} 超过泄漏阈值 {settings.database_session_leak_threshold}！")
@@ -214,10 +230,10 @@ async def get_db(request: Request):
                 logger.warning(f"⚠️ 警告：活跃会话数 {_session_stats['active']} 超过警告阈值 {settings.database_session_max_active}，可能存在连接泄漏！")
             elif _session_stats["active"] < 0:
                 logger.error(f"🚨 活跃会话数异常: {_session_stats['active']}，统计可能不准确！")
-                
+
         except Exception as e:
             _session_stats["errors"] += 1
-            logger.error(f"❌ 关闭会话时出错 [User:{user_id}][ID:{session_id}]: {str(e)}", exc_info=True)
+            logger.error(f"❌ 关闭会话时出错 [User:{user_id}][ID:{session_id}]: {str(e)}")
             try:
                 await session.close()
             except:
