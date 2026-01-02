@@ -604,10 +604,11 @@ export interface AnalysisScores {
   overall: number;
 }
 
-// 分析建议类型 - 兼容字符串和对象两种格式
+// 分析建议类型 - 兼容多种格式
 export type AnalysisSuggestion = string | {
   suggestion_type?: string;
-  content: string;
+  content?: string;
+  suggestion?: string;  // AI 可能返回 {suggestion: "..."} 格式
 };
 
 // 完整分析数据 - 匹配后端PlotAnalysis模型

@@ -322,13 +322,22 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
     if (!analysis?.analysis?.suggestions) return [];
 
     return analysis.analysis.suggestions.map((suggestion, index) => {
-      // 兼容处理：suggestion 可能是字符串或对象 {suggestion_type, content}
-      const suggestionText = typeof suggestion === 'string'
-        ? suggestion
-        : (suggestion as { suggestion_type?: string; content?: string }).content || JSON.stringify(suggestion);
-      const suggestionType = typeof suggestion === 'object' && suggestion !== null
-        ? (suggestion as { suggestion_type?: string }).suggestion_type
-        : null;
+      // 兼容处理多种格式：
+      // 1. 字符串: "建议内容"
+      // 2. 对象格式1: {suggestion_type: "类型", content: "内容"}
+      // 3. 对象格式2: {suggestion: "建议内容"}
+      let suggestionText: string;
+      let suggestionType: string | null = null;
+
+      if (typeof suggestion === 'string') {
+        suggestionText = suggestion;
+      } else if (typeof suggestion === 'object' && suggestion !== null) {
+        const obj = suggestion as { suggestion_type?: string; content?: string; suggestion?: string };
+        suggestionText = obj.content || obj.suggestion || JSON.stringify(suggestion);
+        suggestionType = obj.suggestion_type || null;
+      } else {
+        suggestionText = String(suggestion);
+      }
 
       return {
         category: suggestionType || '改进建议',
@@ -424,13 +433,23 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
                     <List
                       dataSource={analysis_data.suggestions}
                       renderItem={(item, index) => {
-                        // 兼容处理：item 可能是字符串或对象 {suggestion_type, content}
-                        const suggestionText = typeof item === 'string'
-                          ? item
-                          : (item as { suggestion_type?: string; content?: string }).content || JSON.stringify(item);
-                        const suggestionType = typeof item === 'object' && item !== null
-                          ? (item as { suggestion_type?: string }).suggestion_type
-                          : null;
+                        // 兼容处理多种格式：
+                        // 1. 字符串: "建议内容"
+                        // 2. 对象格式1: {suggestion_type: "类型", content: "内容"}
+                        // 3. 对象格式2: {suggestion: "建议内容"}
+                        let suggestionText: string;
+                        let suggestionType: string | null = null;
+
+                        if (typeof item === 'string') {
+                          suggestionText = item;
+                        } else if (typeof item === 'object' && item !== null) {
+                          const obj = item as { suggestion_type?: string; content?: string; suggestion?: string };
+                          // 优先使用 content 字段，其次使用 suggestion 字段
+                          suggestionText = obj.content || obj.suggestion || JSON.stringify(item);
+                          suggestionType = obj.suggestion_type || null;
+                        } else {
+                          suggestionText = String(item);
+                        }
 
                         return (
                           <List.Item>
