@@ -324,19 +324,32 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
     return analysis.analysis.suggestions.map((suggestion, index) => {
       // 兼容处理多种格式：
       // 1. 字符串: "建议内容"
-      // 2. 对象格式1: {suggestion_type: "类型", content: "内容"}
-      // 3. 对象格式2: {suggestion: "建议内容"}
+      // 2. JSON字符串: '{"suggestion":"建议内容"}'
+      // 3. 对象格式1: {suggestion_type: "类型", content: "内容"}
+      // 4. 对象格式2: {suggestion: "建议内容"}
       let suggestionText: string;
       let suggestionType: string | null = null;
+      let parsedItem = suggestion;
 
+      // 如果是字符串，尝试解析为JSON
       if (typeof suggestion === 'string') {
-        suggestionText = suggestion;
-      } else if (typeof suggestion === 'object' && suggestion !== null) {
-        const obj = suggestion as { suggestion_type?: string; content?: string; suggestion?: string };
-        suggestionText = obj.content || obj.suggestion || JSON.stringify(suggestion);
+        try {
+          if (suggestion.trim().startsWith('{')) {
+            parsedItem = JSON.parse(suggestion);
+          }
+        } catch {
+          // 解析失败，保持原样
+        }
+      }
+
+      if (typeof parsedItem === 'string') {
+        suggestionText = parsedItem;
+      } else if (typeof parsedItem === 'object' && parsedItem !== null) {
+        const obj = parsedItem as { suggestion_type?: string; content?: string; suggestion?: string };
+        suggestionText = obj.content || obj.suggestion || JSON.stringify(parsedItem);
         suggestionType = obj.suggestion_type || null;
       } else {
-        suggestionText = String(suggestion);
+        suggestionText = String(parsedItem);
       }
 
       return {
@@ -435,20 +448,34 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
                       renderItem={(item, index) => {
                         // 兼容处理多种格式：
                         // 1. 字符串: "建议内容"
-                        // 2. 对象格式1: {suggestion_type: "类型", content: "内容"}
-                        // 3. 对象格式2: {suggestion: "建议内容"}
+                        // 2. JSON字符串: '{"suggestion":"建议内容"}'
+                        // 3. 对象格式1: {suggestion_type: "类型", content: "内容"}
+                        // 4. 对象格式2: {suggestion: "建议内容"}
                         let suggestionText: string;
                         let suggestionType: string | null = null;
+                        let parsedItem = item;
 
+                        // 如果是字符串，尝试解析为JSON
                         if (typeof item === 'string') {
-                          suggestionText = item;
-                        } else if (typeof item === 'object' && item !== null) {
-                          const obj = item as { suggestion_type?: string; content?: string; suggestion?: string };
+                          try {
+                            // 尝试解析JSON字符串
+                            if (item.trim().startsWith('{')) {
+                              parsedItem = JSON.parse(item);
+                            }
+                          } catch {
+                            // 解析失败，保持原样
+                          }
+                        }
+
+                        if (typeof parsedItem === 'string') {
+                          suggestionText = parsedItem;
+                        } else if (typeof parsedItem === 'object' && parsedItem !== null) {
+                          const obj = parsedItem as { suggestion_type?: string; content?: string; suggestion?: string };
                           // 优先使用 content 字段，其次使用 suggestion 字段
-                          suggestionText = obj.content || obj.suggestion || JSON.stringify(item);
+                          suggestionText = obj.content || obj.suggestion || JSON.stringify(parsedItem);
                           suggestionType = obj.suggestion_type || null;
                         } else {
-                          suggestionText = String(item);
+                          suggestionText = String(parsedItem);
                         }
 
                         return (
