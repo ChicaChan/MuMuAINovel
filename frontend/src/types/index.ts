@@ -604,6 +604,12 @@ export interface AnalysisScores {
   overall: number;
 }
 
+// 分析建议类型 - 兼容字符串和对象两种格式
+export type AnalysisSuggestion = string | {
+  suggestion_type?: string;
+  content: string;
+};
+
 // 完整分析数据 - 匹配后端PlotAnalysis模型
 export interface AnalysisData {
   id: string;
@@ -628,7 +634,7 @@ export interface AnalysisData {
   engagement_score: number;
   coherence_score: number;
   analysis_report: string;
-  suggestions: string[];
+  suggestions: AnalysisSuggestion[];  // 兼容字符串和对象两种格式
   dialogue_ratio: number;
   description_ratio: number;
   created_at: string;

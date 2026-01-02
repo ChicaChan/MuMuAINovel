@@ -321,11 +321,21 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
   const convertSuggestionsForRegeneration = () => {
     if (!analysis?.analysis?.suggestions) return [];
 
-    return analysis.analysis.suggestions.map((suggestion, index) => ({
-      category: '改进建议',
-      content: suggestion,
-      priority: index < 3 ? 'high' : 'medium'
-    }));
+    return analysis.analysis.suggestions.map((suggestion, index) => {
+      // 兼容处理：suggestion 可能是字符串或对象 {suggestion_type, content}
+      const suggestionText = typeof suggestion === 'string'
+        ? suggestion
+        : (suggestion as { suggestion_type?: string; content?: string }).content || JSON.stringify(suggestion);
+      const suggestionType = typeof suggestion === 'object' && suggestion !== null
+        ? (suggestion as { suggestion_type?: string }).suggestion_type
+        : null;
+
+      return {
+        category: suggestionType || '改进建议',
+        content: suggestionText,
+        priority: index < 3 ? 'high' : 'medium'
+      };
+    });
   };
 
   const renderAnalysisResult = () => {
@@ -413,11 +423,24 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
                   <Card title={<><BulbOutlined /> 改进建议</>} size={isMobile ? 'small' : 'default'}>
                     <List
                       dataSource={analysis_data.suggestions}
-                      renderItem={(item, index) => (
-                        <List.Item>
-                          <span>{index + 1}. {item}</span>
-                        </List.Item>
-                      )}
+                      renderItem={(item, index) => {
+                        // 兼容处理：item 可能是字符串或对象 {suggestion_type, content}
+                        const suggestionText = typeof item === 'string'
+                          ? item
+                          : (item as { suggestion_type?: string; content?: string }).content || JSON.stringify(item);
+                        const suggestionType = typeof item === 'object' && item !== null
+                          ? (item as { suggestion_type?: string }).suggestion_type
+                          : null;
+
+                        return (
+                          <List.Item>
+                            <span>
+                              {index + 1}. {suggestionType && <Tag color="orange">{suggestionType}</Tag>}
+                              {suggestionText}
+                            </span>
+                          </List.Item>
+                        );
+                      }}
                     />
                   </Card>
                 )}
