@@ -39,6 +39,7 @@ export default function ProjectWizardNew() {
       setResumeProjectId(projectId);
       handleResumeGeneration(projectId);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
   // 恢复未完成项目的生成
@@ -121,7 +122,7 @@ export default function ProjectWizardNew() {
           narrative_perspective: '第三人称',
           character_count: 5,
           target_words: 100000,
-          outline_mode: 'one-to-many', // 默认为细化模式
+          outline_mode: 'one-to-one', // 默认为传统模式（1-1）
         }}
       >
         <Form.Item
@@ -320,7 +321,7 @@ export default function ProjectWizardNew() {
 
   return (
     <div style={{
-      minHeight: '100vh',
+      minHeight: '100dvh',
       background: 'var(--color-bg-base)',
     }}>
       {/* 顶部标题栏 - 固定不滚动 */}
@@ -358,6 +359,7 @@ export default function ProjectWizardNew() {
             color: '#fff',
             textShadow: '0 2px 4px rgba(0,0,0,0.1)',
           }}>
+            <RocketOutlined style={{ marginRight: 8 }} />
             项目创建向导
           </Title>
 

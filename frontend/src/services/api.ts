@@ -1,9 +1,4 @@
 import axios from 'axios';
-
-interface MCPPluginSimpleCreate {
-  config_json: string;
-  enabled: boolean;
-}
 import { message } from 'antd';
 import { ssePost } from '../utils/sseClient';
 import type { SSEClientOptions } from '../utils/sseClient';
@@ -50,7 +45,13 @@ import type {
   PresetCreateRequest,
   PresetUpdateRequest,
   PresetListResponse,
+  ChapterPlanItem,
 } from '../types';
+
+interface MCPPluginSimpleCreate {
+  config_json: string;
+  enabled: boolean;
+}
 
 const api = axios.create({
   baseURL: '/api',
@@ -191,7 +192,7 @@ export const settingsApi = {
   getAvailableModels: (params: { api_key: string; api_base_url: string; provider: string }) =>
     api.get<unknown, { provider: string; models: Array<{ value: string; label: string; description: string }>; count?: number }>('/settings/models', { params }),
 
-  testApiConnection: (params: { api_key: string; api_base_url: string; provider: string; llm_model: string }) =>
+  testApiConnection: (params: { api_key: string; api_base_url: string; provider: string; llm_model: string; temperature?: number; max_tokens?: number }) =>
     api.post<unknown, {
       success: boolean;
       message: string;
@@ -199,11 +200,41 @@ export const settingsApi = {
       provider?: string;
       model?: string;
       response_preview?: string;
-      details?: Record<string, boolean>;
+      details?: Record<string, boolean | number>;
       error?: string;
       error_type?: string;
       suggestions?: string[];
     }>('/settings/test', params),
+
+  checkFunctionCalling: (params: { api_key: string; api_base_url: string; provider: string; llm_model: string }) =>
+    api.post<unknown, {
+      success: boolean;
+      supported: boolean;
+      message: string;
+      response_time_ms?: number;
+      provider?: string;
+      model?: string;
+      details?: {
+        finish_reason?: string;
+        has_tool_calls?: boolean;
+        tool_call_count?: number;
+        test_tool?: string;
+        test_prompt?: string;
+        response_type?: string;
+      };
+      tool_calls?: Array<{
+        id?: string;
+        type?: string;
+        function?: {
+          name: string;
+          arguments: string;
+        };
+      }>;
+      response_preview?: string;
+      error?: string;
+      error_type?: string;
+      suggestions?: string[];
+    }>('/settings/check-function-calling', params),
 
   // API配置预设管理
   getPresets: () =>
@@ -258,7 +289,13 @@ export const projectApi = {
   },
 
   // 导出项目数据为JSON
-  exportProjectData: async (id: string, options: { include_generation_history?: boolean; include_writing_styles?: boolean }) => {
+  exportProjectData: async (id: string, options: {
+    include_generation_history?: boolean;
+    include_writing_styles?: boolean;
+    include_careers?: boolean;
+    include_memories?: boolean;
+    include_plot_analysis?: boolean;
+  }) => {
     const response = await axios.post(
       `/api/projects/${id}/export-data`,
       options,
@@ -410,7 +447,7 @@ export const outlineApi = {
     api.post<unknown, OutlineExpansionResponse>(`/outlines/${outlineId}/expand`, data),
 
   // 根据已有规划创建章节（避免重复AI调用）
-  createChaptersFromPlans: (outlineId: string, chapterPlans: any[]) =>
+  createChaptersFromPlans: (outlineId: string, chapterPlans: ChapterPlanItem[]) =>
     api.post<unknown, {
       outline_id: string;
       outline_title: string;
@@ -433,7 +470,7 @@ export const outlineApi = {
 
 export const characterApi = {
   getCharacters: (projectId: string) =>
-    api.get<unknown, Character[]>(`/characters/project/${projectId}`),
+    api.get<unknown, { total: number; items: Character[] }>(`/characters/project/${projectId}`).then(res => res.items),
 
   getCharacter: (id: string) => api.get<unknown, Character>(`/characters/${id}`),
 
@@ -545,7 +582,7 @@ export const characterApi = {
 
 export const chapterApi = {
   getChapters: (projectId: string) =>
-    api.get<unknown, Chapter[]>(`/chapters/project/${projectId}`),
+    api.get<unknown, { total: number; items: Chapter[] }>(`/chapters/project/${projectId}`).then(res => res.items),
 
   getChapter: (id: string) => api.get<unknown, Chapter>(`/chapters/${id}`),
 
@@ -711,6 +748,25 @@ export const wizardStreamApi = {
     options
   ),
 
+  generateCareerSystemStream: (
+    data: {
+      project_id: string;
+      provider?: string;
+      model?: string;
+    },
+    options?: SSEClientOptions
+  ) => ssePost<{
+    project_id: string;
+    main_careers_count: number;
+    sub_careers_count: number;
+    main_careers: string[];
+    sub_careers: string[];
+  }>(
+    '/api/wizard-stream/career-system',
+    data,
+    options
+  ),
+
   generateCompleteOutlineStream: (
     data: {
       project_id: string;
@@ -864,4 +920,85 @@ export const adminApi = {
       success: boolean;
       message: string;
     }>(`/admin/users/${userId}`),
+};
+
+// 伏笔管理API
+export const foreshadowApi = {
+  // 获取项目伏笔列表
+  getProjectForeshadows: (projectId: string, params?: {
+    status?: string;
+    category?: string;
+    source_type?: string;
+    is_long_term?: boolean;
+    page?: number;
+    limit?: number;
+  }) =>
+    api.get<unknown, import('../types').ForeshadowListResponse>(
+      `/foreshadows/projects/${projectId}`,
+      { params }
+    ),
+
+  // 获取伏笔统计
+  getForeshadowStats: (projectId: string, currentChapter?: number) =>
+    api.get<unknown, import('../types').ForeshadowStats>(
+      `/foreshadows/projects/${projectId}/stats`,
+      { params: { current_chapter: currentChapter } }
+    ),
+
+  // 获取章节伏笔上下文
+  getChapterContext: (projectId: string, chapterNumber: number, params?: {
+    include_pending?: boolean;
+    include_overdue?: boolean;
+    lookahead?: number;
+  }) =>
+    api.get<unknown, import('../types').ForeshadowContextResponse>(
+      `/foreshadows/projects/${projectId}/context/${chapterNumber}`,
+      { params }
+    ),
+
+  // 获取待回收伏笔
+  getPendingResolveForeshadows: (projectId: string, currentChapter: number, lookahead?: number) =>
+    api.get<unknown, { total: number; items: import('../types').Foreshadow[] }>(
+      `/foreshadows/projects/${projectId}/pending-resolve`,
+      { params: { current_chapter: currentChapter, lookahead } }
+    ),
+
+  // 获取单个伏笔
+  getForeshadow: (foreshadowId: string) =>
+    api.get<unknown, import('../types').Foreshadow>(`/foreshadows/${foreshadowId}`),
+
+  // 创建伏笔
+  createForeshadow: (data: import('../types').ForeshadowCreate) =>
+    api.post<unknown, import('../types').Foreshadow>('/foreshadows', data),
+
+  // 更新伏笔
+  updateForeshadow: (foreshadowId: string, data: import('../types').ForeshadowUpdate) =>
+    api.put<unknown, import('../types').Foreshadow>(`/foreshadows/${foreshadowId}`, data),
+
+  // 删除伏笔
+  deleteForeshadow: (foreshadowId: string) =>
+    api.delete<unknown, { message: string; id: string }>(`/foreshadows/${foreshadowId}`),
+
+  // 标记伏笔为已埋入
+  plantForeshadow: (foreshadowId: string, data: import('../types').PlantForeshadowRequest) =>
+    api.post<unknown, import('../types').Foreshadow>(`/foreshadows/${foreshadowId}/plant`, data),
+
+  // 标记伏笔为已回收
+  resolveForeshadow: (foreshadowId: string, data: import('../types').ResolveForeshadowRequest) =>
+    api.post<unknown, import('../types').Foreshadow>(`/foreshadows/${foreshadowId}/resolve`, data),
+
+  // 标记伏笔为已废弃
+  abandonForeshadow: (foreshadowId: string, reason?: string) =>
+    api.post<unknown, import('../types').Foreshadow>(
+      `/foreshadows/${foreshadowId}/abandon`,
+      null,
+      { params: { reason } }
+    ),
+
+  // 从分析结果同步伏笔
+  syncFromAnalysis: (projectId: string, data: import('../types').SyncFromAnalysisRequest) =>
+    api.post<unknown, import('../types').SyncFromAnalysisResponse>(
+      `/foreshadows/projects/${projectId}/sync-from-analysis`,
+      data
+    ),
 };

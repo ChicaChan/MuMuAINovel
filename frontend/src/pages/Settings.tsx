@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Card, Form, Input, Button, Select, Slider, InputNumber, message, Space, Typography, Spin, Modal, Alert, Grid, Tabs, List, Tag, Popconfirm, Empty, Row, Col } from 'antd';
-import { SettingOutlined, SaveOutlined, DeleteOutlined, ReloadOutlined, ArrowLeftOutlined, InfoCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, ThunderboltOutlined, PlusOutlined, EditOutlined, CopyOutlined } from '@ant-design/icons';
-import { settingsApi } from '../services/api';
+import { SaveOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, ThunderboltOutlined, PlusOutlined, EditOutlined, CopyOutlined, WarningOutlined } from '@ant-design/icons';
+import { settingsApi, mcpPluginApi } from '../services/api';
 import type { SettingsUpdate, APIKeyPreset, PresetCreateRequest, APIKeyPresetConfig } from '../types';
+import { eventBus, EventNames } from '../store/eventBus';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -11,7 +11,6 @@ const { useBreakpoint } = Grid;
 const { TextArea } = Input;
 
 export default function SettingsPage() {
-  const navigate = useNavigate();
   const screens = useBreakpoint();
   const isMobile = !screens.md; // md断点是768px
   const [form] = Form.useForm();
@@ -50,6 +49,7 @@ export default function SettingsPage() {
     if (activeTab === 'presets') {
       loadPresets();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -72,6 +72,7 @@ export default function SettingsPage() {
         setIsDefaultSettings(false);
         setHasSettings(true);
       }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
       // 如果404表示还没有设置，使用默认值
       if (error?.response?.status === 404) {
@@ -95,11 +96,87 @@ export default function SettingsPage() {
   const handleSave = async (values: SettingsUpdate) => {
     setLoading(true);
     try {
+      // 检查是否与 MCP 缓存的配置不一致
+      const verifiedConfigStr = localStorage.getItem('mcp_verified_config');
+      let configChanged = false;
+      
+      if (verifiedConfigStr) {
+        try {
+          const verifiedConfig = JSON.parse(verifiedConfigStr);
+          configChanged =
+            verifiedConfig.provider !== values.api_provider ||
+            verifiedConfig.baseUrl !== values.api_base_url ||
+            verifiedConfig.model !== values.llm_model;
+        } catch (e) {
+          console.error('Failed to parse verified config:', e);
+        }
+      }
+      
       await settingsApi.saveSettings(values);
       message.success('设置已保存');
       setHasSettings(true);
       setIsDefaultSettings(false);
-    } catch (error) {
+      
+      // 如果配置发生变化，需要处理 MCP 插件
+      if (configChanged) {
+        // 清除 MCP 验证缓存
+        localStorage.removeItem('mcp_verified_config');
+        
+        // 检查并禁用所有 MCP 插件
+        try {
+          const plugins = await mcpPluginApi.getPlugins();
+          const activePlugins = plugins.filter(p => p.enabled);
+          
+          if (activePlugins.length > 0) {
+            // 禁用所有插件
+            message.loading({ content: '正在禁用 MCP 插件...', key: 'disable_mcp' });
+            await Promise.all(activePlugins.map(p => mcpPluginApi.togglePlugin(p.id, false)));
+            message.success({ content: '已禁用所有 MCP 插件', key: 'disable_mcp' });
+            
+            // 显示提示弹窗
+            modal.warning({
+              title: (
+                <Space>
+                  <WarningOutlined style={{ color: '#faad14' }} />
+                  <span>API 配置已更改</span>
+                </Space>
+              ),
+              centered: true,
+              content: (
+                <div style={{ padding: '8px 0' }}>
+                  <Alert
+                    message="检测到您修改了 API 配置（提供商、地址或模型），为确保 MCP 插件正常工作，系统已自动禁用所有插件。"
+                    type="warning"
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                  />
+                  <div style={{
+                    padding: 12,
+                    background: 'var(--color-info-bg)',
+                    border: '1px solid var(--color-info-border)',
+                    borderRadius: 8
+                  }}>
+                    <Text strong style={{ display: 'block', marginBottom: 8 }}>请完成以下步骤：</Text>
+                    <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13 }}>
+                      <li>前往 MCP 插件管理页面</li>
+                      <li>重新进行"模型能力检查"</li>
+                      <li>确认新模型支持 Function Calling 后再启用插件</li>
+                    </ol>
+                  </div>
+                </div>
+              ),
+              okText: '前往 MCP 页面',
+              cancelText: '稍后处理',
+              onOk: () => {
+                eventBus.emit(EventNames.SWITCH_TO_MCP_VIEW);
+              },
+            });
+          }
+        } catch (err) {
+          console.error('Failed to disable MCP plugins:', err);
+        }
+      }
+    } catch {
       message.error('保存设置失败');
     } finally {
       setLoading(false);
@@ -142,7 +219,7 @@ export default function SettingsPage() {
           message.success('设置已删除');
           setHasSettings(false);
           form.resetFields();
-        } catch (error) {
+        } catch {
           message.error('删除设置失败');
         } finally {
           setLoading(false);
@@ -192,6 +269,7 @@ export default function SettingsPage() {
       if (!silent) {
         message.success(`成功获取 ${response.count || response.models.length} 个可用模型`);
       }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
       const errorMsg = error?.response?.data?.detail || '获取模型列表失败';
       if (!silent) {
@@ -216,6 +294,8 @@ export default function SettingsPage() {
     const apiBaseUrl = form.getFieldValue('api_base_url');
     const provider = form.getFieldValue('api_provider');
     const modelName = form.getFieldValue('llm_model');
+    const temperature = form.getFieldValue('temperature');
+    const maxTokens = form.getFieldValue('max_tokens');
 
     if (!apiKey || !apiBaseUrl || !provider || !modelName) {
       message.warning('请先填写完整的配置信息');
@@ -230,7 +310,9 @@ export default function SettingsPage() {
         api_key: apiKey,
         api_base_url: apiBaseUrl,
         provider: provider,
-        llm_model: modelName
+        llm_model: modelName,
+        temperature: temperature,
+        max_tokens: maxTokens
       });
 
       setTestResult(result);
@@ -241,6 +323,7 @@ export default function SettingsPage() {
       } else {
         message.error('API 测试失败，请查看详细信息');
       }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
       const errorMsg = error?.response?.data?.detail || '测试请求失败';
       message.error(errorMsg);
@@ -340,6 +423,7 @@ export default function SettingsPage() {
       await settingsApi.deletePreset(presetId);
       message.success('预设已删除');
       loadPresets();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
       message.error(error.response?.data?.detail || '删除失败');
       console.error(error);
@@ -348,10 +432,94 @@ export default function SettingsPage() {
 
   const handlePresetActivate = async (presetId: string, presetName: string) => {
     try {
+      // 获取预设配置用于比较
+      const preset = presets.find(p => p.id === presetId);
+      
       await settingsApi.activatePreset(presetId);
       message.success(`已激活预设: ${presetName}`);
       loadPresets();
       loadSettings(); // 重新加载当前配置
+      
+      // 检查是否与 MCP 缓存的配置不一致
+      if (preset) {
+        const verifiedConfigStr = localStorage.getItem('mcp_verified_config');
+        let configChanged = false;
+        
+        if (verifiedConfigStr) {
+          try {
+            const verifiedConfig = JSON.parse(verifiedConfigStr);
+            configChanged =
+              verifiedConfig.provider !== preset.config.api_provider ||
+              verifiedConfig.baseUrl !== preset.config.api_base_url ||
+              verifiedConfig.model !== preset.config.llm_model;
+          } catch (e) {
+            console.error('Failed to parse verified config:', e);
+            configChanged = true; // 解析失败也视为配置变化
+          }
+        } else {
+          // 没有缓存的配置，如果有启用的插件也需要处理
+          configChanged = true;
+        }
+        
+        if (configChanged) {
+          // 清除 MCP 验证缓存
+          localStorage.removeItem('mcp_verified_config');
+          
+          // 检查并禁用所有 MCP 插件
+          try {
+            const plugins = await mcpPluginApi.getPlugins();
+            const activePlugins = plugins.filter(p => p.enabled);
+            
+            if (activePlugins.length > 0) {
+              // 禁用所有插件
+              message.loading({ content: '正在禁用 MCP 插件...', key: 'disable_mcp' });
+              await Promise.all(activePlugins.map(p => mcpPluginApi.togglePlugin(p.id, false)));
+              message.success({ content: '已禁用所有 MCP 插件', key: 'disable_mcp' });
+              
+              // 显示提示弹窗
+              modal.warning({
+                title: (
+                  <Space>
+                    <WarningOutlined style={{ color: '#faad14' }} />
+                    <span>API 配置已更改</span>
+                  </Space>
+                ),
+                centered: true,
+                content: (
+                  <div style={{ padding: '8px 0' }}>
+                    <Alert
+                      message={`切换到预设「${presetName}」后，API 配置发生了变化。为确保 MCP 插件正常工作，系统已自动禁用所有插件。`}
+                      type="warning"
+                      showIcon
+                      style={{ marginBottom: 16 }}
+                    />
+                    <div style={{
+                      padding: 12,
+                      background: 'var(--color-info-bg)',
+                      border: '1px solid var(--color-info-border)',
+                      borderRadius: 8
+                    }}>
+                      <Text strong style={{ display: 'block', marginBottom: 8 }}>请完成以下步骤：</Text>
+                      <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13 }}>
+                        <li>前往 MCP 插件管理页面</li>
+                        <li>重新进行"模型能力检查"</li>
+                        <li>确认新模型支持 Function Calling 后再启用插件</li>
+                      </ol>
+                    </div>
+                  </div>
+                ),
+                okText: '前往 MCP 页面',
+                cancelText: '稍后处理',
+                onOk: () => {
+                  eventBus.emit(EventNames.SWITCH_TO_MCP_VIEW);
+                },
+              });
+            }
+          } catch (err) {
+            console.error('Failed to disable MCP plugins:', err);
+          }
+        }
+      }
     } catch (error) {
       message.error('激活失败');
       console.error(error);
@@ -624,9 +792,9 @@ export default function SettingsPage() {
     <>
       {contextHolder}
       <div style={{
-        minHeight: '100vh',
+        minHeight: '90vh',
         background: 'linear-gradient(180deg, var(--color-bg-base) 0%, #EEF2F3 100%)',
-        padding: isMobile ? '20px 16px' : '40px 24px',
+        padding: isMobile ? '20px 16px 70px' : '24px 24px 70px',
         display: 'flex',
         flexDirection: 'column',
       }}>
@@ -660,7 +828,6 @@ export default function SettingsPage() {
               <Col xs={24} sm={12}>
                 <Space direction="vertical" size={4}>
                   <Title level={isMobile ? 3 : 2} style={{ margin: 0, color: '#fff', textShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
-                    <SettingOutlined style={{ color: 'rgba(255,255,255,0.9)', marginRight: 8 }} />
                     AI API 设置
                   </Title>
                   <Text style={{ fontSize: isMobile ? 12 : 14, color: 'rgba(255,255,255,0.85)', marginLeft: isMobile ? 40 : 48 }}>
@@ -669,31 +836,7 @@ export default function SettingsPage() {
                 </Space>
               </Col>
               <Col xs={24} sm={12}>
-                <Space size={12} style={{ display: 'flex', justifyContent: isMobile ? 'flex-start' : 'flex-end', width: '100%' }}>
-                  <Button
-                    icon={<ArrowLeftOutlined />}
-                    onClick={() => navigate('/')}
-                    style={{
-                      borderRadius: 12,
-                      background: 'rgba(255, 255, 255, 0.15)',
-                      border: '1px solid rgba(255, 255, 255, 0.3)',
-                      boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
-                      color: '#fff',
-                      backdropFilter: 'blur(10px)',
-                      transition: 'all 0.3s ease'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = 'rgba(255, 255, 255, 0.25)';
-                      e.currentTarget.style.transform = 'translateY(-1px)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
-                      e.currentTarget.style.transform = 'none';
-                    }}
-                  >
-                    返回主页
-                  </Button>
-                </Space>
+                {/* 按钮区域预留 */}
               </Col>
             </Row>
           </Card>
@@ -1239,99 +1382,135 @@ export default function SettingsPage() {
           open={isPresetModalVisible}
           onOk={handlePresetSave}
           onCancel={handlePresetCancel}
-          width={isMobile ? '90%' : 600}
+          width={isMobile ? '95%' : 640}
           centered
           okText="保存"
           cancelText="取消"
+          styles={{
+            body: {
+              padding: isMobile ? '16px' : '20px 24px'
+            }
+          }}
         >
           <Form
             form={presetForm}
             layout="vertical"
+            size={isMobile ? 'middle' : 'large'}
           >
-            <Form.Item
-              name="name"
-              label="预设名称"
-              rules={[
-                { required: true, message: '请输入预设名称' },
-                { max: 50, message: '名称不能超过50个字符' },
-              ]}
-            >
-              <Input placeholder="例如：工作账号-GPT4" />
-            </Form.Item>
+            {/* 基本信息 */}
+            <Row gutter={16}>
+              <Col xs={24} sm={16}>
+                <Form.Item
+                  name="name"
+                  label="预设名称"
+                  rules={[
+                    { required: true, message: '请输入预设名称' },
+                    { max: 50, message: '名称不能超过50个字符' },
+                  ]}
+                  style={{ marginBottom: 16 }}
+                >
+                  <Input placeholder="例如：工作账号-GPT4" />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={8}>
+                <Form.Item
+                  name="api_provider"
+                  label="API 提供商"
+                  rules={[{ required: true, message: '请选择' }]}
+                  style={{ marginBottom: 16 }}
+                >
+                  <Select placeholder="选择提供商">
+                    <Select.Option value="openai">OpenAI</Select.Option>
+                    <Select.Option value="gemini">Google Gemini</Select.Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
 
             <Form.Item
               name="description"
               label="预设描述"
               rules={[{ max: 200, message: '描述不能超过200个字符' }]}
+              style={{ marginBottom: 16 }}
             >
-              <TextArea rows={2} placeholder="例如：用于日常写作任务（可选）" />
+              <Input placeholder="例如：用于日常写作任务（可选）" />
             </Form.Item>
 
-            <Form.Item
-              name="api_provider"
-              label="API 提供商"
-              rules={[{ required: true, message: '请选择API提供商' }]}
-            >
-              <Select>
-                <Select.Option value="openai">OpenAI</Select.Option>
-                {/* <Select.Option value="anthropic">Anthropic (Claude)</Select.Option> */}
-                <Select.Option value="gemini">Google Gemini</Select.Option>
-              </Select>
-            </Form.Item>
+            {/* API 配置 */}
+            <Row gutter={16}>
+              <Col xs={24} sm={12}>
+                <Form.Item
+                  name="api_key"
+                  label="API Key"
+                  rules={[{ required: true, message: '请输入API Key' }]}
+                  style={{ marginBottom: 16 }}
+                >
+                  <Input.Password placeholder="sk-..." />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12}>
+                <Form.Item
+                  name="api_base_url"
+                  label="API Base URL"
+                  style={{ marginBottom: 16 }}
+                >
+                  <Input placeholder="https://api.openai.com/v1" />
+                </Form.Item>
+              </Col>
+            </Row>
 
-            <Form.Item
-              name="api_key"
-              label="API Key"
-              rules={[{ required: true, message: '请输入API Key' }]}
-            >
-              <Input.Password placeholder="sk-..." />
-            </Form.Item>
-
-            <Form.Item name="api_base_url" label="API Base URL">
-              <Input placeholder="https://api.openai.com/v1（可选）" />
-            </Form.Item>
-
-            <Form.Item
-              name="llm_model"
-              label="模型名称"
-              rules={[{ required: true, message: '请输入模型名称' }]}
-            >
-              <Input placeholder="例如：gpt-4, claude-3-opus-20240229" />
-            </Form.Item>
-
-            <Form.Item
-              name="temperature"
-              label="温度参数"
-              rules={[{ required: true, message: '请输入温度参数' }]}
-            >
-              <InputNumber
-                min={0}
-                max={2}
-                step={0.1}
-                style={{ width: '100%' }}
-                placeholder="0.7"
-              />
-            </Form.Item>
-
-            <Form.Item
-              name="max_tokens"
-              label="最大 Tokens"
-              rules={[{ required: true, message: '请输入最大tokens' }]}
-            >
-              <InputNumber
-                min={1}
-                max={100000}
-                style={{ width: '100%' }}
-                placeholder="2000"
-              />
-            </Form.Item>
+            {/* 模型配置 */}
+            <Row gutter={16}>
+              <Col xs={24} sm={12}>
+                <Form.Item
+                  name="llm_model"
+                  label="模型名称"
+                  rules={[{ required: true, message: '请输入模型名称' }]}
+                  style={{ marginBottom: 16 }}
+                >
+                  <Input placeholder="例如：gpt-4" />
+                </Form.Item>
+              </Col>
+              <Col xs={12} sm={6}>
+                <Form.Item
+                  name="temperature"
+                  label="温度"
+                  rules={[{ required: true, message: '必填' }]}
+                  style={{ marginBottom: 16 }}
+                >
+                  <InputNumber
+                    min={0}
+                    max={2}
+                    step={0.1}
+                    style={{ width: '100%' }}
+                    placeholder="0.7"
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} sm={6}>
+                <Form.Item
+                  name="max_tokens"
+                  label="最大Tokens"
+                  rules={[{ required: true, message: '必填' }]}
+                  style={{ marginBottom: 16 }}
+                >
+                  <InputNumber
+                    min={1}
+                    max={100000}
+                    style={{ width: '100%' }}
+                    placeholder="2000"
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
 
             <Form.Item
               name="system_prompt"
               label="系统提示词"
+              style={{ marginBottom: 0 }}
             >
               <TextArea
-                rows={3}
+                rows={isMobile ? 2 : 3}
                 placeholder="例如：你是一个专业的小说创作助手...（可选）"
                 maxLength={10000}
                 showCount

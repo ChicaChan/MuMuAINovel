@@ -12,7 +12,7 @@ from app.database import close_db, _session_stats
 from app.logger import setup_logging, get_logger
 from app.middleware import RequestIDMiddleware
 from app.middleware.auth_middleware import AuthMiddleware
-from app.mcp.registry import mcp_registry
+from app.mcp import mcp_client, register_status_sync
 
 setup_logging(
     level=config_settings.log_level,
@@ -27,12 +27,15 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
+    # 注册MCP状态同步服务
+    register_status_sync()
+    
     logger.info("应用启动完成")
     
     yield
     
     # 清理MCP插件
-    await mcp_registry.cleanup_all()
+    await mcp_client.cleanup()
     
     # 清理HTTP客户端池
     from app.services.ai_service import cleanup_http_clients
@@ -127,7 +130,7 @@ from app.api import (
     wizard_stream, relationships, organizations,
     auth, users, settings, writing_styles, memories,
     mcp_plugins, admin, inspiration, prompt_templates,
-    changelog, careers
+    changelog, careers, foreshadows
 )
 
 app.include_router(auth.router, prefix="/api")
@@ -146,6 +149,7 @@ app.include_router(relationships.router, prefix="/api")
 app.include_router(organizations.router, prefix="/api")
 app.include_router(writing_styles.router, prefix="/api")
 app.include_router(memories.router)  # 记忆管理API (已包含/api前缀)
+app.include_router(foreshadows.router)  # 伏笔管理API (已包含/api前缀)
 app.include_router(mcp_plugins.router, prefix="/api")  # MCP插件管理API
 app.include_router(prompt_templates.router, prefix="/api")  # 提示词模板管理API
 app.include_router(changelog.router, prefix="/api")  # 更新日志API
@@ -181,7 +185,7 @@ else:
     @app.get("/")
     async def root():
         return {
-            "message": "欢迎使用AI Story Creator",
+            "message": "欢迎使用MuMuAINovel",
             "version": config_settings.app_version,
             "docs": "/docs",
             "notice": "请先构建前端: cd frontend && npm run build"
